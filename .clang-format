@@ -1,0 +1,7 @@
+# Google C++ style, with house adjustments:
+#  - 100-column limit (peripheral calls and index helpers don't fit in 80)
+#  - explicit left pointer alignment instead of deriving per-file
+BasedOnStyle: Google
+ColumnLimit: 100
+DerivePointerAlignment: false
+PointerAlignment: Left

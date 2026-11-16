@@ -1,0 +1,36 @@
+name: format
+
+# Formatting is cheap to check and annoying to fix late, so gate every push to
+# main and every PR on it.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch makes an in-flight run obsolete.
+concurrency:
+  group: format-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  clang-format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      # The pinned clang-format from pip, not the runner's system one -- the
+      # runner's version moves with the image and would change the results.
+      - name: Install clang-format
+        run: pip install -r requirements-dev.txt
+
+      - name: Check formatting
+        run: python scripts/check_format.py

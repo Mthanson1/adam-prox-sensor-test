@@ -1,0 +1,29 @@
+# Enforce LF line endings in the repo and working tree for all text files.
+# This prevents CRLF/LF churn on Windows and keeps GCC/PlatformIO happy.
+
+* text=auto eol=lf
+
+# Source & headers
+*.c     text eol=lf
+*.cpp   text eol=lf
+*.h     text eol=lf
+*.hpp   text eol=lf
+*.ino   text eol=lf
+*.s     text eol=lf
+
+# Build config
+*.ld    text eol=lf
+*.ini   text eol=lf
+*.json  text eol=lf
+
+# Docs & repo meta
+*.md            text eol=lf
+.gitignore      text eol=lf
+.gitattributes  text eol=lf
+
+# Treat compiled/binary outputs as binary (no line ending conversion)
+*.elf   binary
+*.bin   binary
+*.hex   binary
+*.o     binary
+*.a     binary

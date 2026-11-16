@@ -1,0 +1,43 @@
+# PlatformIO build output
+.pio/
+logs/
+
+# VS Code -- share only the PlatformIO extension recommendation
+.vscode/*
+!.vscode/extensions.json
+
+# ----- Linux -----
+# Swap files
+*~
+.*.swp
+.*.swo
+
+# Compiled object / dependency files
+*.o
+*.d
+*.elf
+*.bin
+*.hex
+*.map
+
+# Shared libraries
+*.so
+*.so.*
+*.a
+
+# Core dumps
+core
+
+# ----- macOS -----
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ----- Windows -----
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Python
+.venv/
+scripts/__pycache__/

@@ -1,0 +1,5 @@
+# Developer tooling.
+# Install with: pip install -r requirements-dev.txt
+clang-format==23.1.0
+matplotlib
+numpy
