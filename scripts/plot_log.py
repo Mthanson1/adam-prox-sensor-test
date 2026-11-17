@@ -18,6 +18,7 @@ printed to the console (see dip_analysis.py).
     python scripts/plot_log.py                  # newest log in logs/
     python scripts/plot_log.py logs/foo.log     # specific log(s); globs OK
     python scripts/plot_log.py --true-pos 120   # known target position [steps]
+    python scripts/plot_log.py --window 5 10    # load cell: residual over 5-10 s only
 """
 
 import argparse
@@ -169,14 +170,38 @@ def break_gaps(t, y):
 LOADCELL_FS_MVV = 1000.0 / 128.0
 
 
-def plot_loadcell(title, seg):
-    """Load-cell capture: mV/V against time, with noise figures printed."""
+def plot_loadcell(title, seg, window=None):
+    """Load-cell capture: mV/V against time, with noise figures printed.
+
+    window, if given, is (start_s, end_s) on the plot's time axis: the noise
+    figures and residuals are then computed only over that span, e.g. the part
+    of the capture where a constant load was on the cell.
+    """
     cols = seg.cols
     t_us = np.unwrap(cols["t_us"], period=2**32)
     t = (t_us - t_us[0]) * 1e-6
-    mvv = cols["mv_per_v"]
-    uv = cols["uv"]
+    mvv_all = cols["mv_per_v"]
     fs = 1.0 / np.median(np.diff(t)) if len(t) > 1 else float("nan")
+
+    if window is not None:
+        lo, hi = window
+        sel = (t >= lo) & (t <= hi)
+        if np.count_nonzero(sel) < 3:
+            print(f"\n=== {title}: load cell ===")
+            print(f"window {lo:g}-{hi:g} s holds {np.count_nonzero(sel)} samples "
+                  f"(capture runs 0-{t[-1]:.1f} s); need at least 3")
+            return
+        span_note = f"{lo:g}-{hi:g} s"
+    else:
+        sel = np.ones(len(t), dtype=bool)
+        span_note = "whole capture"
+    tw, mvv, uv = t[sel], mvv_all[sel], cols["uv"][sel]
+
+    # Residuals: deviation from the window's mean, and from a straight-line fit
+    # (which takes out slow drift such as creep or warm-up).
+    resid_uvv = (mvv - np.mean(mvv)) * 1e3
+    slope, intercept = np.polyfit(tw, mvv, 1)
+    detr_uvv = (mvv - (slope * tw + intercept)) * 1e3
 
     rms_uv = np.std(uv)
     pp_uv = np.ptp(uv)
@@ -184,25 +209,46 @@ def plot_loadcell(title, seg):
     span = 2 * LOADCELL_FS_MVV  # full range in mV/V
     enob = np.log2(span / (rms_mvv * np.sqrt(12))) if rms_mvv > 0 else float("inf")
     noise_free = np.log2(span / np.ptp(mvv)) if np.ptp(mvv) > 0 else float("inf")
-    print(f"\n=== {title}: load cell ===")
-    print(f"{len(t)} samples over {t[-1]:.1f} s ({fs:.2f} SPS)")
+    print(f"\n=== {title}: load cell ({span_note}) ===")
+    print(f"{len(tw)} samples over {tw[-1] - tw[0]:.1f} s ({fs:.2f} SPS)")
     print(f"mean   {np.mean(mvv):+.6f} mV/V   ({np.mean(uv):+.2f} uV)")
     print(f"noise  {rms_uv:.3f} uV rms, {pp_uv:.3f} uV p-p   ({rms_mvv * 1e3:.4f} uV/V rms)")
     print(f"       ~{enob:.1f} effective bits, ~{noise_free:.1f} noise-free bits "
           f"over the +/-{LOADCELL_FS_MVV:.2f} mV/V range")
-    print("These are only noise figures while the load is constant; if you loaded the "
-          "cell during the capture, they include that change.")
+    print(f"drift  {slope * 1e3:+.4f} uV/V per s (linear fit)")
+    print(f"resid  {np.std(resid_uvv):.4f} uV/V rms about the mean, "
+          f"{np.std(detr_uvv):.4f} uV/V rms about the linear fit "
+          f"({np.ptp(detr_uvv):.4f} p-p)")
+    if window is None:
+        print("These are only noise figures while the load is constant; if you loaded the "
+              "cell during the capture, they include that change (use --window).")
 
-    fig, axes = plt.subplots(2, 1, figsize=(10, 7))
+    fig, axes = plt.subplots(3, 1, figsize=(10, 9))
     fig.suptitle(title)
-    axes[0].plot(*break_gaps(t, mvv))
+    axes[0].plot(*break_gaps(t, mvv_all))
+    if window is not None:
+        axes[0].axvspan(tw[0], tw[-1], color="tab:orange", alpha=0.15,
+                        label=f"window {span_note}")
+        axes[0].plot(tw, slope * tw + intercept, color="tab:orange", lw=1,
+                     label="linear fit")
+        axes[0].legend(fontsize=8, loc="best")
     axes[0].set_xlabel("Time (s)")
     axes[0].set_ylabel("Bridge output (mV/V)")
-    axes[0].set_title(f"{len(t)} samples  {fs:.1f} SPS  noise {rms_uv:.2f} uV rms",
-                      fontsize=9, loc="right")
-    axes[1].hist((mvv - np.mean(mvv)) * 1e3, bins=50)
-    axes[1].set_xlabel("Deviation from mean (uV/V)")
-    axes[1].set_ylabel("Samples")
+    axes[0].set_title(f"{len(tw)} samples ({span_note})  {fs:.1f} SPS  "
+                      f"noise {rms_uv:.2f} uV rms", fontsize=9, loc="right")
+
+    axes[1].plot(*break_gaps(tw, resid_uvv), lw=0.8, label="about mean")
+    axes[1].plot(*break_gaps(tw, detr_uvv), lw=0.8, label="about linear fit")
+    axes[1].axhline(0, color="k", lw=0.5)
+    axes[1].set_xlabel("Time (s)")
+    axes[1].set_ylabel("Residual (uV/V)")
+    axes[1].legend(fontsize=8, loc="best")
+
+    axes[2].hist(resid_uvv, bins=50, alpha=0.6, label="about mean")
+    axes[2].hist(detr_uvv, bins=50, alpha=0.6, label="about linear fit")
+    axes[2].set_xlabel(f"Residual (uV/V), {span_note}")
+    axes[2].set_ylabel("Samples")
+    axes[2].legend(fontsize=8, loc="best")
     for ax in axes:
         ax.grid(True)
     fig.tight_layout()
@@ -256,8 +302,15 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("logs", nargs="*")
+    parser.add_argument(
+        "--window", nargs=2, type=float, metavar=("START", "END"),
+        help="load-cell logs: only compute noise/residuals between START and END "
+             "seconds (plot time axis), e.g. --window 5 10 for a constant-load span",
+    )
     dip_analysis.add_arguments(parser)
     args = parser.parse_args()
+    if args.window and args.window[1] <= args.window[0]:
+        parser.error("--window END must be greater than START")
 
     # windows doesn't expand wildcards
     logs = [Path(f) for p in args.logs for f in glob.glob(p)]
@@ -278,7 +331,7 @@ def main():
         for i, seg in enumerate(segments):
             title = path.stem if len(segments) == 1 else f"{path.stem} (run {i + 1})"
             if "mv_per_v" in seg.cols:
-                plot_loadcell(title, seg)
+                plot_loadcell(title, seg, args.window)
                 plotted += 1
                 continue
             plot_segment(title, seg)

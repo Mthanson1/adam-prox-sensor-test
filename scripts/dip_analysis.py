@@ -188,13 +188,18 @@ def group_dips(dips):
     return g + 1
 
 
-def stationary_noise(channel, pos, fs):
+def stationary_noise(channel, pos, fs, min_dwell_s=MIN_DWELL_S, settle_s=DWELL_SETTLE_S):
     """Pooled RMS noise [V] over dwells, ignoring clipped readings.
+
+    Each dwell's variance uses ddof=1, so short dwells (a sweep that pauses only
+    a few samples per step) are not biased low by removing their own mean.
 
     Returns (rms, dwells used, dwells skipped because they were clipped).
     """
-    min_len = int(MIN_DWELL_S * fs)
-    settle = int(DWELL_SETTLE_S * fs)
+    min_len = int(round(min_dwell_s * fs))
+    settle = int(round(settle_s * fs))
+    # Need a few samples left after settling to estimate a variance at all.
+    min_good = max(3, min(10, min_len - settle))
     change = np.concatenate(([True], np.diff(pos) != 0, [True]))
     bounds = np.nonzero(change)[0]
     usable = channel.valid & ~channel.clipped
@@ -204,11 +209,11 @@ def stationary_noise(channel, pos, fs):
             continue
         idx = np.arange(s + settle, e)
         good = idx[usable[idx]]
-        if len(good) < 0.5 * len(idx) or len(good) < 10:
+        if len(good) < 0.5 * len(idx) or len(good) < min_good:
             clipped_dwells += 1
             continue
-        variances.append(np.var(channel.volts[good]))
-        counts.append(len(good))
+        variances.append(np.var(channel.volts[good], ddof=1))
+        counts.append(len(good) - 1)  # weight by degrees of freedom
     if not counts:
         return float("nan"), 0, clipped_dwells
     return float(np.sqrt(np.average(variances, weights=counts))), len(counts), clipped_dwells
@@ -237,10 +242,10 @@ def report(title, channels, dips, n_groups, pos, fs, args):
 
     print("\n-- Stationary noise (repeatability of a single reading) --")
     for c in channels:
-        rms, n, n_clipped = stationary_noise(c, pos, fs)
+        rms, n, n_clipped = stationary_noise(c, pos, fs, args.min_dwell, args.dwell_settle)
         if n == 0:
             why = (f"all {n_clipped} dwells clipped (sensor above full scale)" if n_clipped
-                   else f"no dwells of {MIN_DWELL_S} s or longer")
+                   else f"no dwells of {args.min_dwell} s or longer (try --min-dwell)")
             print(f"{c.name:8s} not measurable: {why}")
             continue
         enob = np.log2(c.full_scale_v / (rms * np.sqrt(12))) if rms > 0 else float("inf")
@@ -416,5 +421,11 @@ def add_arguments(parser):
                    help="stepper steps per revolution in the logged step mode (default 200)")
     g.add_argument("--mm-per-rev", type=float, default=None,
                    help="target travel per motor revolution, to also report mm")
+    g.add_argument("--min-dwell", type=float, default=MIN_DWELL_S,
+                   help=f"shortest stop at one position used for stationary noise [s] "
+                        f"(default {MIN_DWELL_S}; e.g. 0.016 for a sweep with 20 ms steps)")
+    g.add_argument("--dwell-settle", type=float, default=DWELL_SETTLE_S,
+                   help=f"samples skipped at the start of each dwell while the motor "
+                        f"settles [s] (default {DWELL_SETTLE_S})")
     g.add_argument("--true-pos", type=float, nargs="+", default=None,
                    help="known target position(s) in steps, one per feature, for absolute accuracy")
